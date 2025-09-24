@@ -1,0 +1,31 @@
+# Build artifacts
+bin/
+obj/
+
+# VS/VSCode
+.vs/
+.vscode/
+
+# User-specific
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Publish profiles / secrets
+Properties/PublishProfiles/*.pubxml.user
+*.pubxml.user
+secrets.json
+
+# Logs
+*.log
+
+# Generated
+**/*.AssemblyInfo.cs
+**/.NETCoreApp,Version=*/
+
+# Others
+Thumbs.db
+*.tmp
+*.cache
+*.ds_store
