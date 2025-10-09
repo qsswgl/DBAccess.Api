@@ -42,12 +42,12 @@ USER dbaccess
 
 # Environment variables
 ENV ASPNETCORE_ENVIRONMENT=Production
-ENV ASPNETCORE_URLS=http://+:8080
+ENV ASPNETCORE_URLS=https://+:8443;http://+:8080
 ENV DOTNET_RUNNING_IN_CONTAINER=true
 ENV DOTNET_EnableDiagnostics=0
 
-# Expose port
-EXPOSE 8080
+# Expose ports
+EXPOSE 8080 8443
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \

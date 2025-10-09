@@ -17,9 +17,61 @@ if (OperatingSystem.IsWindows())
     builder.Logging.AddEventLog();
 }
 
-// 设置默认监听 URL（服务环境下没有 launchSettings）
-var urls = Environment.GetEnvironmentVariable("ASPNETCORE_URLS") ?? "http://0.0.0.0:5189";
-builder.WebHost.UseUrls(urls);
+// 配置 Kestrel 服务器从配置文件读取设置
+builder.WebHost.ConfigureKestrel((context, options) =>
+{
+    // 清除任何默认配置，确保使用我们的设置
+    
+    var config = context.Configuration;
+    var hostSettings = config.GetSection("HostSettings");
+    var domain = hostSettings["Domain"] ?? "localhost";
+    var httpPort = int.Parse(hostSettings["HttpPort"] ?? "5189");
+    var httpsPort = int.Parse(hostSettings["HttpsPort"] ?? "5190");
+    
+    // 配置 HTTP 监听 - 监听所有网络接口
+    options.ListenAnyIP(httpPort);
+    Console.WriteLine($"✅ HTTP enabled on all interfaces: 0.0.0.0:{httpPort}");
+    
+    // 尝试配置 HTTPS
+    var certPath = "certificates/qsgl.net.pfx";
+    var certPassword = Environment.GetEnvironmentVariable("CERT_PASSWORD");
+    
+    var fullCertPath = Path.Combine(Directory.GetCurrentDirectory(), certPath);
+    var enableHttps = File.Exists(fullCertPath) && !string.IsNullOrEmpty(certPassword);
+    
+    if (enableHttps)
+    {
+        // HTTPS - 监听所有网络接口，支持域名访问
+        options.ListenAnyIP(httpsPort, listenOptions =>
+        {
+            try
+            {
+                listenOptions.UseHttps(fullCertPath, certPassword);
+                Console.WriteLine($"✅ HTTPS enabled with certificate: {fullCertPath}");
+                Console.WriteLine($"✅ HTTPS listening on all interfaces: 0.0.0.0:{httpsPort}");
+                Console.WriteLine($"✅ Domain access: https://{domain}:{httpsPort}");
+                Console.WriteLine($"✅ External access enabled for domain and IP addresses");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Failed to load certificate: {ex.Message}");
+                Console.WriteLine("   HTTPS will be disabled. Check certificate path and password.");
+            }
+        });
+    }
+    else
+    {
+        if (!File.Exists(fullCertPath))
+        {
+            Console.WriteLine($"⚠️  Certificate not found: {fullCertPath}");
+        }
+        if (string.IsNullOrEmpty(certPassword))
+        {
+            Console.WriteLine("⚠️  Certificate password not set (CERT_PASSWORD environment variable)");
+        }
+        Console.WriteLine("   Running in HTTP-only mode.");
+    }
+});
 
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
@@ -101,6 +153,16 @@ builder.Services.AddSingleton(new DbService(server, user, password, guard));
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
+// 检查是否启用 HTTPS 重定向（生产环境）
+var hostSettings = app.Configuration.GetSection("HostSettings");
+var enableHttpsRedirect = bool.Parse(hostSettings["EnableHttpsRedirect"] ?? "false");
+
+if (enableHttpsRedirect && !app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+    Console.WriteLine("✅ HTTPS redirection enabled for production");
+}
+
 // 启用 CORS
 app.UseCors();
 

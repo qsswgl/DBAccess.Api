@@ -1,31 +1,76 @@
-# Build artifacts
+# Build output
 bin/
 obj/
+out/
+publish/
 
-# VS/VSCode
+# Visual Studio / Visual Studio Code
 .vs/
 .vscode/
-
-# User-specific
 *.user
 *.suo
 *.userosscache
 *.sln.docstates
 
-# Publish profiles / secrets
-Properties/PublishProfiles/*.pubxml.user
-*.pubxml.user
-secrets.json
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
 
-# Logs
+# NuGet Packages
+*.nupkg
+*.snupkg
+.nuget/packages/
+
+# Test results
+TestResults/
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+
+# Docker
+.dockerignore
+
+# Certificate files (security)
+certificates/*.pfx
+certificates/*.p12
+certificates/*.crt
+certificates/*.key
+
+# But keep README files in certificates
+!certificates/README.md
+
+# PowerShell test scripts (development only)
+test-*.ps1
+diagnose-*.ps1
+create-test-cert.ps1
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Log files
 *.log
+logs/
 
-# Generated
-**/*.AssemblyInfo.cs
-**/.NETCoreApp,Version=*/
-
-# Others
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+
+# Temporary files
 *.tmp
-*.cache
-*.ds_store
+*.temp
+*.swp
+*.swo
+
+# Compressed files
+*.tar.gz
+*.zip
+*.rar
