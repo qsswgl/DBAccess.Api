@@ -1,0 +1,51 @@
+@DBAccess.Api_HostAddress = http://localhost:5000
+
+### Execute Stored Procedure
+POST {{DBAccess.Api_HostAddress}}/api/storedprocedure/execute
+Content-Type: application/json
+
+{
+  "name": "sp_GetUsers",
+  "parameters": {
+    "UserId": 1,
+    "Status": "Active"
+  }
+}
+
+### Execute Database Function
+POST {{DBAccess.Api_HostAddress}}/api/function/execute
+Content-Type: application/json
+
+{
+  "name": "fn_CalculateTotal",
+  "parameters": {
+    "Amount": 100,
+    "TaxRate": 0.15
+  }
+}
+
+### Query Table
+POST {{DBAccess.Api_HostAddress}}/api/table/query
+Content-Type: application/json
+
+{
+  "tableName": "Users",
+  "whereClause": "Status = @Status AND CreatedDate > @Date",
+  "parameters": {
+    "Status": "Active",
+    "Date": "2024-01-01"
+  },
+  "top": 10,
+  "orderBy": "CreatedDate DESC"
+}
+
+### Query Table (Simple)
+POST {{DBAccess.Api_HostAddress}}/api/table/query
+Content-Type: application/json
+
+{
+  "tableName": "Users",
+  "top": 10
+}
+
+###
