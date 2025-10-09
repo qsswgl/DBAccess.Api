@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-cn">
+<head>
+  <meta charset="utf-8" />
+  <title>DBAccess API 测试</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; }
+    textarea, input { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; }
+    .row { margin: 8px 0; }
+    pre { background: #111; color: #0f0; padding: 12px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <h2>Procedure 测试</h2>
+  <div class="row">
+    <label>DB Name</label>
+    <input id="db" placeholder="qsoft" />
+  </div>
+  <div class="row">
+    <label>Procedure Name</label>
+    <input id="proc" placeholder="dnspod_update" />
+  </div>
+  <div class="row">
+    <label>Body(JSON) - 将作为 @inputValue 传入</label>
+    <textarea id="body" rows="6" placeholder='[{"clientIp":"115.48.61.145","domain":"3950.qsgl.net"}]'></textarea>
+  </div>
+  <div class="row">
+    <button id="go">调用</button>
+  </div>
+  <div class="row">
+    <label>响应</label>
+    <pre id="out"></pre>
+  </div>
+
+  <script>
+    const K = 'dbaccess_demo_v1';
+    const els = {
+      db: document.getElementById('db'),
+      proc: document.getElementById('proc'),
+      body: document.getElementById('body'),
+      out: document.getElementById('out'),
+      go: document.getElementById('go')
+    };
+    const load = () => {
+      try {
+        const v = JSON.parse(localStorage.getItem(K) || '{}');
+        if (v.db) els.db.value = v.db;
+        if (v.proc) els.proc.value = v.proc;
+        if (v.body) els.body.value = v.body;
+      } catch {}
+    };
+    const save = () => {
+      const v = {
+        db: els.db.value.trim(),
+        proc: els.proc.value.trim(),
+        body: els.body.value
+      };
+      localStorage.setItem(K, JSON.stringify(v));
+    };
+    load();
+
+    els.go.addEventListener('click', async () => {
+      save();
+      const db = els.db.value.trim();
+      const proc = els.proc.value.trim();
+      let payload;
+      try { payload = JSON.parse(els.body.value || 'null'); }
+      catch(e){ els.out.textContent = 'Body 不是合法 JSON: ' + e.message; return; }
+
+      try {
+        const res = await fetch(`/${encodeURIComponent(db)}/procedure/${encodeURIComponent(proc)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const text = await res.text();
+        els.out.textContent = text;
+      } catch (e) {
+        els.out.textContent = '请求失败: ' + e.message;
+      }
+    });
+  </script>
+</body>
+</html>

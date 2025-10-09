@@ -1,0 +1,4 @@
+k:\DBAccess\publish\DBAccess.Api-win-x64\appsettings.Development.json
+k:\DBAccess\publish\DBAccess.Api-win-x64\appsettings.json
+k:\DBAccess\publish\DBAccess.Api-win-x64\DBAccess.Api.pdb
+k:\DBAccess\publish\DBAccess.Api-win-x64\DBAccess.Api.exe

@@ -1,0 +1,51 @@
+# Docker ignore file for DBAccess.Api
+# Exclude unnecessary files from Docker build context
+
+**/.dockerignore
+**/.env
+**/.git
+**/.gitignore
+**/.vs
+**/.vscode
+**/**/bin
+**/**/obj
+**/.toolstarget
+**/Dockerfile*
+**/docker-compose*
+**/README.md
+**/*.md
+**/.DS_Store
+**/logs
+**/temp
+**/tmp
+
+# Windows specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Visual Studio
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+# Development certificates
+**/*.pfx
+**/*.p12
+
+# Logs
+logs/
+*.log
+
+# Test results
+TestResults/
+
+# Node.js (if any frontend assets)
+node_modules/
+npm-debug.log*
+
+# Build artifacts that shouldn't be in image
+bin/
+obj/
