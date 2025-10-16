@@ -1,5 +1,7 @@
 using System.Text.Json;
 using DBAccess.Api.Services;
+using DBAccess.Api.Models;
+using DBAccess.Api.Json;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DBAccess.Api.Controllers;
@@ -13,23 +15,37 @@ public class RestDbController : ControllerBase
     private readonly DbService _db;
     public RestDbController(DbService db) => _db = db;
 
-    // POST /{dbName}/procedure/{procedureName}
-    // Body: 任意 JSON（对象/数组/字符串/空），将作为单一 @inputValue 传入存储过程
+    /// <summary>
+    /// 调用存储过程
+    /// </summary>
+    /// <param name="dbName">数据库名称</param>
+    /// <param name="procedureName">存储过程名称</param>
+    /// <param name="input">JSON格式的输入参数</param>
+    /// <returns>存储过程执行结果</returns>
+    /// <remarks>
+    /// 输入参数将被序列化为JSON字符串，作为@inputValue传递给存储过程
+    /// 
+    /// 示例：调用 DNSPOD_UPDATE 存储过程
+    /// </remarks>
     [HttpPost("{dbName}/procedure/{procedureName}")]
-    public ActionResult<string> CallProcedure(
+    [Consumes("application/json")]
+    [Produces("application/json")]
+    [ProducesResponseType(200, Type = typeof(string))]
+    [ProducesResponseType(500)]
+    public async Task<ActionResult<string>> CallProcedure(
         [FromRoute] string dbName,
         [FromRoute] string procedureName,
-        [FromBody] JsonElement? body)
+        [FromBody] ProcedureInputModel input)
     {
-        string inputValue;
-        if (body is null || body.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-            inputValue = string.Empty;
-        else if (body.Value.ValueKind == JsonValueKind.String)
-            inputValue = body.Value.GetString() ?? string.Empty;
-        else
-            inputValue = body.Value.GetRawText(); // 原样 JSON 字符串
+        string inputString = string.Empty;
+        
+        if (input != null)
+        {
+            // 将输入对象序列化为JSON字符串，使用AOT兼容的上下文
+            inputString = JsonSerializer.Serialize(input, AppJsonContext.Default.ProcedureInputModel);
+        }
 
-        var result = _db.Procedure(dbName, procedureName, new[] { "inputValue" }, new[] { inputValue });
+        var result = _db.Procedure(dbName, procedureName, new[] { "inputValue" }, new[] { inputString });
         return Content(result, "application/json");
     }
 
@@ -60,29 +76,43 @@ public class RestDbController : ControllerBase
         [FromQuery(Name = "fields")] string? fields,
         [FromQuery(Name = "order")] string? orderStr,
         [FromQuery] string? limit,
-        [FromQuery] string? offset,
-        [FromBody] JsonElement? args)
+        [FromQuery] string? offset)
     {
         string inputValue = string.Empty;
 
-        if (args.HasValue)
+        if (Request.Body != null && Request.ContentLength > 0)
         {
-            var a = args.Value;
-            switch (a.ValueKind)
+            using var reader = new StreamReader(Request.Body);
+            var bodyContent = reader.ReadToEnd();
+            
+            if (!string.IsNullOrEmpty(bodyContent))
             {
-                case JsonValueKind.Array:
-                    var parts = new List<string>();
-                    foreach (var el in a.EnumerateArray())
-                        parts.Add(ToSqlLiteral(el));
-                    inputValue = string.Join(", ", parts); // 例: 'abc', 123, 1
-                    break;
-                case JsonValueKind.String:
-                    inputValue = a.GetString() ?? string.Empty; // 允许传原始参数串
-                    break;
-                default:
-                    // 其它形态作为单一 JSON 字符串实参
-                    inputValue = ToSqlStringLiteral(a.GetRawText());
-                    break;
+                try
+                {
+                    var jsonDoc = JsonDocument.Parse(bodyContent);
+                    var jsonElement = jsonDoc.RootElement;
+                    
+                    switch (jsonElement.ValueKind)
+                    {
+                        case JsonValueKind.Array:
+                            var parts = new List<string>();
+                            foreach (var el in jsonElement.EnumerateArray())
+                                parts.Add(ToSqlLiteral(el));
+                            inputValue = string.Join(", ", parts);
+                            break;
+                        case JsonValueKind.String:
+                            inputValue = jsonElement.GetString() ?? string.Empty;
+                            break;
+                        default:
+                            inputValue = ToSqlStringLiteral(jsonElement.GetRawText());
+                            break;
+                    }
+                }
+                catch
+                {
+                    // 如果不是有效JSON，直接使用原始字符串
+                    inputValue = bodyContent;
+                }
             }
         }
 

@@ -1,5 +1,6 @@
 using DBAccess.Api.Services;
 using DBAccess.Api.Services.Security;
+using DBAccess.Api.Json;
 using Microsoft.AspNetCore.Http;
 using System.Linq;
 using Microsoft.Extensions.Hosting;
@@ -20,11 +21,8 @@ if (OperatingSystem.IsWindows())
 // 配置 Kestrel 服务器从配置文件读取设置
 builder.WebHost.ConfigureKestrel((context, options) =>
 {
-    // 清除任何默认配置，确保使用我们的设置
-    
     var config = context.Configuration;
     var hostSettings = config.GetSection("HostSettings");
-    var domain = hostSettings["Domain"] ?? "localhost";
     var httpPort = int.Parse(hostSettings["HttpPort"] ?? "5189");
     var httpsPort = int.Parse(hostSettings["HttpsPort"] ?? "5190");
     
@@ -32,50 +30,66 @@ builder.WebHost.ConfigureKestrel((context, options) =>
     options.ListenAnyIP(httpPort);
     Console.WriteLine($"✅ HTTP enabled on all interfaces: 0.0.0.0:{httpPort}");
     
-    // 尝试配置 HTTPS
-    var certPath = "certificates/qsgl.net.pfx";
+    // 配置 HTTPS 监听
     var certPassword = Environment.GetEnvironmentVariable("CERT_PASSWORD");
+    string certPath = "";
     
-    var fullCertPath = Path.Combine(Directory.GetCurrentDirectory(), certPath);
-    var enableHttps = File.Exists(fullCertPath) && !string.IsNullOrEmpty(certPassword);
-    
-    if (enableHttps)
+    // 按优先级检查证书路径
+    var certPaths = new[]
     {
-        // HTTPS - 监听所有网络接口，支持域名访问
-        options.ListenAnyIP(httpsPort, listenOptions =>
+        "/app/certificates/qsgl.net.pfx",
+        "/certificates/qsgl.net.pfx",
+        "./certificates/qsgl.net.pfx"
+    };
+    
+    foreach (var path in certPaths)
+    {
+        if (File.Exists(path))
         {
-            try
+            certPath = path;
+            break;
+        }
+    }
+    
+    if (!string.IsNullOrEmpty(certPath) && !string.IsNullOrEmpty(certPassword))
+    {
+        try
+        {
+            options.ListenAnyIP(httpsPort, listenOptions =>
             {
-                listenOptions.UseHttps(fullCertPath, certPassword);
-                Console.WriteLine($"✅ HTTPS enabled with certificate: {fullCertPath}");
-                Console.WriteLine($"✅ HTTPS listening on all interfaces: 0.0.0.0:{httpsPort}");
-                Console.WriteLine($"✅ Domain access: https://{domain}:{httpsPort}");
-                Console.WriteLine($"✅ External access enabled for domain and IP addresses");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ Failed to load certificate: {ex.Message}");
-                Console.WriteLine("   HTTPS will be disabled. Check certificate path and password.");
-            }
-        });
+                listenOptions.UseHttps(certPath, certPassword);
+            });
+            Console.WriteLine($"✅ HTTPS enabled with certificate: {certPath}");
+            Console.WriteLine($"✅ HTTPS listening on all interfaces: 0.0.0.0:{httpsPort}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ HTTPS configuration failed: {ex.Message}");
+            Console.WriteLine("⚠️  Falling back to HTTP-only mode");
+        }
     }
     else
     {
-        if (!File.Exists(fullCertPath))
-        {
-            Console.WriteLine($"⚠️  Certificate not found: {fullCertPath}");
-        }
-        if (string.IsNullOrEmpty(certPassword))
-        {
-            Console.WriteLine("⚠️  Certificate password not set (CERT_PASSWORD environment variable)");
-        }
-        Console.WriteLine("   Running in HTTP-only mode.");
+        Console.WriteLine("⚠️  HTTPS disabled - certificate or password not found");
+        Console.WriteLine($"   Certificate path checked: {string.Join(", ", certPaths)}");
+        Console.WriteLine($"   CERT_PASSWORD environment variable: {(string.IsNullOrEmpty(certPassword) ? "NOT SET" : "SET")}");
     }
 });
 
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // 修复.NET 8 AOT的JSON序列化问题
+        options.JsonSerializerOptions.PropertyNamingPolicy = null;
+        options.JsonSerializerOptions.WriteIndented = false;
+        options.JsonSerializerOptions.AllowTrailingCommas = true;
+        options.JsonSerializerOptions.ReadCommentHandling = System.Text.Json.JsonCommentHandling.Skip;
+        
+        // 添加AOT兼容的JSON序列化上下文
+        options.JsonSerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default);
+    });
 builder.Services.AddEndpointsApiExplorer();
 
 // 添加 CORS 支持
@@ -93,7 +107,13 @@ builder.Services.AddSwaggerGen(c =>
     c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
     {
         Title = "DBAccess REST API",
-        Version = "v1"
+        Version = "v1",
+        Description = "通用数据库访问API - 支持动态表查询、分页、排序和安全过滤",
+        Contact = new Microsoft.OpenApi.Models.OpenApiContact
+        {
+            Name = "DBAccess API",
+            Url = new Uri("https://tx.qsgl.net:5190")
+        }
     });
 
     // API Key（X-API-Key）安全定义，便于在 UI 中 Authorize
@@ -153,34 +173,28 @@ builder.Services.AddSingleton(new DbService(server, user, password, guard));
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
-// 检查是否启用 HTTPS 重定向（生产环境）
-var hostSettings = app.Configuration.GetSection("HostSettings");
-var enableHttpsRedirect = bool.Parse(hostSettings["EnableHttpsRedirect"] ?? "false");
-
-if (enableHttpsRedirect && !app.Environment.IsDevelopment())
-{
-    app.UseHttpsRedirection();
-    Console.WriteLine("✅ HTTPS redirection enabled for production");
-}
+// HTTPS重定向已禁用 - 仅运行HTTP服务
 
 // 启用 CORS
 app.UseCors();
 
-// 仅在开发环境启用 Swagger
-if (app.Environment.IsDevelopment())
+// 启用 Swagger 文档（支持开发和生产环境）
+app.UseSwagger();
+app.UseSwaggerUI(c =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "DBAccess REST v1");
-        c.RoutePrefix = "swagger";
-        c.DefaultModelsExpandDepth(-1);
-    });
-    
-    // 开发环境的测试页面
-    app.UseDefaultFiles();
-    app.UseStaticFiles();
-}
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "DBAccess REST API v1");
+    c.RoutePrefix = "swagger";
+    c.DefaultModelsExpandDepth(-1);
+    c.DocumentTitle = "DBAccess API Documentation";
+    c.DocExpansion(Swashbuckle.AspNetCore.SwaggerUI.DocExpansion.List);
+});
+
+// 添加根路径重定向到 Swagger
+app.MapGet("/", () => Results.Redirect("/swagger"));
+
+// 静态文件支持
+app.UseDefaultFiles();
+app.UseStaticFiles();
 
 app.MapControllers();
 
@@ -191,7 +205,7 @@ app.MapGet("/api/dbaccess/ping", (string db, DbService svc) =>
     {
         // 选择一个极轻量的查询（使用分页限制而不是 TOP 表达式）
         var result = svc.Table(db, "sys.objects", "1=0", "*", "name asc", "1", "0");
-        return Results.Ok(new { ok = true });
+        return Results.Text("{\"ok\":true}", "application/json");
     }
     catch (Exception ex)
     {
