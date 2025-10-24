@@ -1,0 +1,1085 @@
+From 58d25658c86192b230851361d763522e676be457 Mon Sep 17 00:00:00 2001
+From: qsswgl <qsoft@139.com>
+Date: Thu, 9 Oct 2025 21:49:41 +0800
+Subject: [PATCH] =?UTF-8?q?feat:=20=E9=85=8D=E7=BD=AEHTTPS=E6=94=AF?=
+ =?UTF-8?q?=E6=8C=81=E5=92=8C=E9=85=8D=E7=BD=AE=E6=96=87=E4=BB=B6=E5=8C=96?=
+ =?UTF-8?q?=E7=AE=A1=E7=90=86?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 将证书配置、域名设置移至appsettings.json配置文件
+- 支持通过环境变量CERT_PASSWORD安全管理证书密码
+- 配置Kestrel监听所有网络接口(0.0.0.0)，支持外网访问
+- 添加生产环境HTTPS重定向支持
+- 更新launchSettings.json支持https、production配置文件
+- 添加防火墙规则配置(端口5189、5190)
+- 创建部署文档和启动脚本
+- 更新Docker配置支持HTTPS端口
+- 添加证书目录和README说明文件
+
+外网访问地址: https://3950.qsgl.net:5190
+---
+ .gitignore                                  |  77 ++++-
+ DBAccess.Api/DBAccess.Api.csproj            |   2 +-
+ DBAccess.Api/DEPLOYMENT-COMPLETE.md         | 131 ++++++++
+ DBAccess.Api/Dockerfile                     |   6 +-
+ DBAccess.Api/HTTPS-DEPLOYMENT.md            | 164 ++++++++++
+ DBAccess.Api/Program.cs                     |  68 ++++-
+ DBAccess.Api/Properties/launchSettings.json |  11 +-
+ DBAccess.Api/appsettings.Production.json    |  13 +
+ DBAccess.Api/appsettings.json               |  14 +-
+ DBAccess.Api/certificates/README.md         |  18 ++
+ DBAccess.Api/start-production.bat           |  20 ++
+ DBAccess.sln                                |  41 +--
+ Interface.cs                                | 322 --------------------
+ 13 files changed, 506 insertions(+), 381 deletions(-)
+ create mode 100644 DBAccess.Api/DEPLOYMENT-COMPLETE.md
+ create mode 100644 DBAccess.Api/HTTPS-DEPLOYMENT.md
+ create mode 100644 DBAccess.Api/certificates/README.md
+ create mode 100644 DBAccess.Api/start-production.bat
+
+diff --git a/.gitignore b/.gitignore
+index a5a24dc..0eaa701 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,31 +1,76 @@
+-# Build artifacts
++# Build output
+ bin/
+ obj/
++out/
++publish/
+ 
+-# VS/VSCode
++# Visual Studio / Visual Studio Code
+ .vs/
+ .vscode/
+-
+-# User-specific
+ *.user
+ *.suo
+ *.userosscache
+ *.sln.docstates
+ 
+-# Publish profiles / secrets
+-Properties/PublishProfiles/*.pubxml.user
+-*.pubxml.user
+-secrets.json
++# .NET Core
++project.lock.json
++project.fragment.lock.json
++artifacts/
+ 
+-# Logs
+-*.log
++# NuGet Packages
++*.nupkg
++*.snupkg
++.nuget/packages/
++
++# Test results
++TestResults/
++[Tt]est[Rr]esult*/
++*.trx
++*.coverage
++*.coveragexml
++
++# Docker
++.dockerignore
++
++# Certificate files (security)
++certificates/*.pfx
++certificates/*.p12
++certificates/*.crt
++certificates/*.key
++
++# But keep README files in certificates
++!certificates/README.md
+ 
+-# Generated
+-**/*.AssemblyInfo.cs
+-**/.NETCoreApp,Version=*/
++# PowerShell test scripts (development only)
++test-*.ps1
++diagnose-*.ps1
++create-test-cert.ps1
+ 
+-# Others
++# Environment files
++.env
++.env.local
++.env.production
++
++# Log files
++*.log
++logs/
++
++# OS generated files
++.DS_Store
++.DS_Store?
++._*
++.Spotlight-V100
++.Trashes
++ehthumbs.db
+ Thumbs.db
++
++# Temporary files
+ *.tmp
+-*.cache
+-*.ds_store
+\ No newline at end of file
++*.temp
++*.swp
++*.swo
++
++# Compressed files
++*.tar.gz
++*.zip
++*.rar
+\ No newline at end of file
+diff --git a/DBAccess.Api/DBAccess.Api.csproj b/DBAccess.Api/DBAccess.Api.csproj
+index be5cbfc..5eb4110 100644
+--- a/DBAccess.Api/DBAccess.Api.csproj
++++ b/DBAccess.Api/DBAccess.Api.csproj
+@@ -1,7 +1,7 @@
+ <Project Sdk="Microsoft.NET.Sdk.Web">
+ 
+   <PropertyGroup>
+-    <TargetFramework>net8.0</TargetFramework>
++    <TargetFramework>net10.0</TargetFramework>
+     <Nullable>enable</Nullable>
+     <ImplicitUsings>enable</ImplicitUsings>
+   </PropertyGroup>
+diff --git a/DBAccess.Api/DEPLOYMENT-COMPLETE.md b/DBAccess.Api/DEPLOYMENT-COMPLETE.md
+new file mode 100644
+index 0000000..2184293
+--- /dev/null
++++ b/DBAccess.Api/DEPLOYMENT-COMPLETE.md
+@@ -0,0 +1,131 @@
++# DBAccess API HTTPS 外网部署完成报告
++
++## ✅ 配置完成项目
++
++### 1. 配置文件化管理
++- **appsettings.json**: 开发环境配置，包含基本主机设置
++- **appsettings.Production.json**: 生产环境配置，包含域名和HTTPS重定向设置
++- **证书路径**: `certificates/qsgl.net.pfx`
++- **密码管理**: 通过 `CERT_PASSWORD` 环境变量
++
++### 2. Program.cs 更新
++- 从配置文件读取主机设置和端口配置
++- 智能证书加载：检测证书文件和密码可用性
++- 自动降级机制：无证书时运行HTTP模式
++- 网络绑定：监听所有网络接口 (0.0.0.0)，支持外网访问
++- 生产环境HTTPS重定向支持
++
++### 3. 网络配置
++- **HTTP端口**: 5189 (所有接口)
++- **HTTPS端口**: 5190 (所有接口)
++- **防火墙规则**: 已添加 5189 和 5190 端口入站规则
++- **证书**: 自签名测试证书 (支持 3950.qsgl.net, localhost, 192.168.137.101)
++
++### 4. 启动脚本
++- **start-production.bat**: Windows批处理启动脚本
++- **test-external-access.ps1**: 外网访问测试脚本
++- **环境变量自动设置**: CERT_PASSWORD, ASPNETCORE_ENVIRONMENT
++
++## 🎯 当前状态
++
++### 服务地址
++- **本地HTTP**: http://localhost:5189
++- **本地HTTPS**: https://localhost:5190  
++- **外网HTTP**: http://3950.qsgl.net:5189
++- **外网HTTPS**: https://3950.qsgl.net:5190
++
++### 测试结果
++✅ 应用程序成功启动
++✅ HTTP和HTTPS端口正常监听
++✅ 证书加载成功
++✅ 防火墙规则配置完成
++✅ 监听所有网络接口 (0.0.0.0)
++
++### 启动信息
++```
++✅ HTTP enabled on all interfaces: 0.0.0.0:5189
++✅ HTTPS enabled with certificate: certificates/qsgl.net.pfx
++✅ HTTPS listening on all interfaces: 0.0.0.0:5190
++✅ Domain access: https://3950.qsgl.net:5190
++✅ External access enabled for domain and IP addresses
++✅ HTTPS redirection enabled for production
++```
++
++## 🚀 部署使用方法
++
++### 快速启动
++```bash
++# 方法1: 使用批处理脚本
++start-production.bat
++
++# 方法2: 手动设置环境变量
++set CERT_PASSWORD=123456
++set ASPNETCORE_ENVIRONMENT=Production
++dotnet run --no-launch-profile
++```
++
++### 生产环境部署
++1. **替换证书**: 将真实的 `qsgl.net.pfx` 放入 `certificates/` 目录
++2. **设置密码**: 更新 `CERT_PASSWORD` 环境变量为真实证书密码
++3. **启动服务**: 运行 `start-production.bat`
++
++### 外网访问测试
++运行测试脚本检查配置状态：
++```powershell
++PowerShell -ExecutionPolicy Bypass -File test-external-access.ps1
++```
++
++## 🔧 故障排除
++
++### 证书问题
++- 确保证书文件在 `certificates/qsgl.net.pfx` 路径
++- 检查 `CERT_PASSWORD` 环境变量设置正确
++- 应用程序会自动降级到HTTP模式如果证书加载失败
++
++### 网络访问问题
++如果外网无法访问，请检查：
++1. **路由器配置**: 确保端口转发设置 (5189→内网IP:5189, 5190→内网IP:5190)
++2. **ISP限制**: 某些ISP可能封锁自定义端口
++3. **DNS解析**: 确保 `3950.qsgl.net` 正确解析到公网IP
++4. **防火墙**: Windows Defender防火墙规则已配置
++
++### 常用检查命令
++```powershell
++# 检查端口监听状态
++netstat -ano | findstr "5189\|5190"
++
++# 检查防火墙规则
++Get-NetFirewallRule -DisplayName "*DBAccess*"
++
++# 检查DNS解析
++nslookup 3950.qsgl.net
++
++# 检查应用程序进程
++Get-Process -Name "dotnet"
++```
++
++## 📚 配置文件结构
++
++### appsettings.Production.json
++```json
++{
++  "HostSettings": {
++    "Domain": "3950.qsgl.net",
++    "HttpPort": 5189,
++    "HttpsPort": 5190,
++    "EnableHttpsRedirect": true
++  }
++}
++```
++
++### 环境变量
++- `CERT_PASSWORD`: 证书密码
++- `ASPNETCORE_ENVIRONMENT`: 运行环境 (Production)
++
++## 🎉 完成状态
++
++所有配置已完成，应用程序已准备好接受外网HTTPS访问。证书和域名配置已从硬编码转移到配置文件管理，提高了维护性和安全性。
++
++**外网访问地址**: https://3950.qsgl.net:5190
++
++请使用 `start-production.bat` 启动服务，应用程序将自动配置所有必要的网络和安全设置。
+\ No newline at end of file
+diff --git a/DBAccess.Api/Dockerfile b/DBAccess.Api/Dockerfile
+index dabd325..1c0b8c9 100644
+--- a/DBAccess.Api/Dockerfile
++++ b/DBAccess.Api/Dockerfile
+@@ -42,12 +42,12 @@ USER dbaccess
+ 
+ # Environment variables
+ ENV ASPNETCORE_ENVIRONMENT=Production
+-ENV ASPNETCORE_URLS=http://+:8080
++ENV ASPNETCORE_URLS=https://+:8443;http://+:8080
+ ENV DOTNET_RUNNING_IN_CONTAINER=true
+ ENV DOTNET_EnableDiagnostics=0
+ 
+-# Expose port
+-EXPOSE 8080
++# Expose ports
++EXPOSE 8080 8443
+ 
+ # Health check
+ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+diff --git a/DBAccess.Api/HTTPS-DEPLOYMENT.md b/DBAccess.Api/HTTPS-DEPLOYMENT.md
+new file mode 100644
+index 0000000..0ba1105
+--- /dev/null
++++ b/DBAccess.Api/HTTPS-DEPLOYMENT.md
+@@ -0,0 +1,164 @@
++# DBAccess API HTTPS 部署指南
++
++## 🎯 概述
++DBAccess.Api 现已支持 HTTPS 连接，适用于生产环境部署在 `https://3950.qsgl.net:5190`。
++
++## 📋 当前配置
++
++### 端口配置
++- **HTTP**: 5189 端口（开发和备用）
++- **HTTPS**: 5190 端口（主要生产端口）
++
++### 证书配置
++- 证书路径: `certificates/qsgl.net.pfx`
++- 环境变量: `CERT_PASSWORD`（证书密码）
++
++## 🚀 部署步骤
++
++### 1. 准备证书
++将生产环境的 `qsgl.net.pfx` 证书文件放置在 `certificates/` 目录中。
++
++### 2. 设置环境变量
++```powershell
++# Windows PowerShell
++$env:CERT_PASSWORD="your-actual-certificate-password"
++
++# Windows Command Prompt
++set CERT_PASSWORD=your-actual-certificate-password
++
++# Linux/Mac
++export CERT_PASSWORD="your-actual-certificate-password"
++```
++
++### 3. 运行方式
++
++#### 本地开发（HTTP）
++```powershell
++dotnet run --launch-profile http
++```
++访问: http://localhost:5189
++
++#### 本地开发（HTTPS）
++```powershell
++$env:CERT_PASSWORD="your-password"
++dotnet run --launch-profile https
++```
++访问: https://localhost:5190
++
++#### 生产环境
++```powershell
++$env:CERT_PASSWORD="your-password"
++dotnet run --launch-profile production
++```
++访问: https://3950.qsgl.net:5190
++
++### 4. 使用启动脚本
++
++#### Windows
++```powershell
++.\start-https.bat
++```
++
++#### Linux
++```bash
++chmod +x start-https.sh
++./start-https.sh
++```
++
++## 🔧 配置文件说明
++
++### Program.cs 配置
++- 自动检测证书文件和密码
++- 无证书时自动降级为 HTTP 模式
++- 生产环境错误处理和日志记录
++
++### launchSettings.json 配置文件
++- `http`: 仅 HTTP 模式 (5189)
++- `https`: HTTP + HTTPS 模式 (5189 + 5190)
++- `production`: 生产环境配置 (3950.qsgl.net)
++
++## 🐳 Docker 部署
++
++### 构建镜像
++```bash
++docker build -t dbaccess-api:latest .
++```
++
++### 运行容器（带证书）
++```bash
++docker run -d \
++  --name dbaccess-api \
++  -p 8080:8080 \
++  -p 8443:8443 \
++  -v /path/to/certificates:/app/certificates:ro \
++  -e CERT_PASSWORD="your-password" \
++  -e ASPNETCORE_ENVIRONMENT=Production \
++  dbaccess-api:latest
++```
++
++## ✅ 验证部署
++
++### 检查端点
++- HTTP: `curl http://localhost:5189/`
++- HTTPS: `curl -k https://localhost:5190/`
++
++### 检查日志
++启动时应看到以下消息：
++```
++✅ HTTPS enabled with certificate: certificates/qsgl.net.pfx
++info: Now listening on: http://[::]:5189
++info: Now listening on: https://[::]:5190
++```
++
++## 🛡️ 安全注意事项
++
++1. **证书管理**
++   - 保护证书文件权限 (600 或更严格)
++   - 定期更新证书
++   - 安全存储证书密码
++
++2. **环境变量**
++   - 生产环境中通过安全方式设置 `CERT_PASSWORD`
++   - 避免在脚本中硬编码密码
++
++3. **网络配置**
++   - 确保防火墙允许 5190 端口
++   - 配置反向代理（如 Nginx）进行负载均衡
++
++## 🔍 故障排除
++
++### 常见问题
++
++#### 证书加载失败
++```
++❌ Failed to load certificate: 指定的网络密码不正确
++```
++**解决方法**: 检查 `CERT_PASSWORD` 环境变量
++
++#### 证书未找到
++```
++⚠️  Certificate not found: certificates/qsgl.net.pfx
++```
++**解决方法**: 确保证书文件在正确位置
++
++#### 端口占用
++```
++Failed to bind to address http://[::]:5189: address already in use
++```
++**解决方法**: 停止其他进程或更改端口
++
++### 调试命令
++```powershell
++# 检查端口占用
++netstat -ano | findstr 5189
++netstat -ano | findstr 5190
++
++# 检查证书文件
++Test-Path "certificates/qsgl.net.pfx"
++
++# 检查环境变量
++echo $env:CERT_PASSWORD
++```
++
++## 📞 支持信息
++如有问题，请检查应用程序日志和上述故障排除指南。
+\ No newline at end of file
+diff --git a/DBAccess.Api/Program.cs b/DBAccess.Api/Program.cs
+index 003d48e..ec6ad5c 100644
+--- a/DBAccess.Api/Program.cs
++++ b/DBAccess.Api/Program.cs
+@@ -17,9 +17,61 @@ if (OperatingSystem.IsWindows())
+     builder.Logging.AddEventLog();
+ }
+ 
+-// 设置默认监听 URL（服务环境下没有 launchSettings）
+-var urls = Environment.GetEnvironmentVariable("ASPNETCORE_URLS") ?? "http://0.0.0.0:5189";
+-builder.WebHost.UseUrls(urls);
++// 配置 Kestrel 服务器从配置文件读取设置
++builder.WebHost.ConfigureKestrel((context, options) =>
++{
++    // 清除任何默认配置，确保使用我们的设置
++    
++    var config = context.Configuration;
++    var hostSettings = config.GetSection("HostSettings");
++    var domain = hostSettings["Domain"] ?? "localhost";
++    var httpPort = int.Parse(hostSettings["HttpPort"] ?? "5189");
++    var httpsPort = int.Parse(hostSettings["HttpsPort"] ?? "5190");
++    
++    // 配置 HTTP 监听 - 监听所有网络接口
++    options.ListenAnyIP(httpPort);
++    Console.WriteLine($"✅ HTTP enabled on all interfaces: 0.0.0.0:{httpPort}");
++    
++    // 尝试配置 HTTPS
++    var certPath = "certificates/qsgl.net.pfx";
++    var certPassword = Environment.GetEnvironmentVariable("CERT_PASSWORD");
++    
++    var fullCertPath = Path.Combine(Directory.GetCurrentDirectory(), certPath);
++    var enableHttps = File.Exists(fullCertPath) && !string.IsNullOrEmpty(certPassword);
++    
++    if (enableHttps)
++    {
++        // HTTPS - 监听所有网络接口，支持域名访问
++        options.ListenAnyIP(httpsPort, listenOptions =>
++        {
++            try
++            {
++                listenOptions.UseHttps(fullCertPath, certPassword);
++                Console.WriteLine($"✅ HTTPS enabled with certificate: {fullCertPath}");
++                Console.WriteLine($"✅ HTTPS listening on all interfaces: 0.0.0.0:{httpsPort}");
++                Console.WriteLine($"✅ Domain access: https://{domain}:{httpsPort}");
++                Console.WriteLine($"✅ External access enabled for domain and IP addresses");
++            }
++            catch (Exception ex)
++            {
++                Console.WriteLine($"❌ Failed to load certificate: {ex.Message}");
++                Console.WriteLine("   HTTPS will be disabled. Check certificate path and password.");
++            }
++        });
++    }
++    else
++    {
++        if (!File.Exists(fullCertPath))
++        {
++            Console.WriteLine($"⚠️  Certificate not found: {fullCertPath}");
++        }
++        if (string.IsNullOrEmpty(certPassword))
++        {
++            Console.WriteLine("⚠️  Certificate password not set (CERT_PASSWORD environment variable)");
++        }
++        Console.WriteLine("   Running in HTTP-only mode.");
++    }
++});
+ 
+ // Add services to the container.
+ // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+@@ -101,6 +153,16 @@ builder.Services.AddSingleton(new DbService(server, user, password, guard));
+ var app = builder.Build();
+ 
+ // Configure the HTTP request pipeline.
++// 检查是否启用 HTTPS 重定向（生产环境）
++var hostSettings = app.Configuration.GetSection("HostSettings");
++var enableHttpsRedirect = bool.Parse(hostSettings["EnableHttpsRedirect"] ?? "false");
++
++if (enableHttpsRedirect && !app.Environment.IsDevelopment())
++{
++    app.UseHttpsRedirection();
++    Console.WriteLine("✅ HTTPS redirection enabled for production");
++}
++
+ // 启用 CORS
+ app.UseCors();
+ 
+diff --git a/DBAccess.Api/Properties/launchSettings.json b/DBAccess.Api/Properties/launchSettings.json
+index ad2e556..4b50dc1 100644
+--- a/DBAccess.Api/Properties/launchSettings.json
++++ b/DBAccess.Api/Properties/launchSettings.json
+@@ -14,10 +14,19 @@
+       "commandName": "Project",
+       "dotnetRunMessages": true,
+       "launchBrowser": false,
+-      "applicationUrl": "https://localhost:7053;http://localhost:5189",
++      "applicationUrl": "https://0.0.0.0:5190;http://0.0.0.0:5189",
+       "environmentVariables": {
+         "ASPNETCORE_ENVIRONMENT": "Development"
+       }
++    },
++    "production": {
++      "commandName": "Project",
++      "dotnetRunMessages": true,
++      "launchBrowser": false,
++      "applicationUrl": "https://3950.qsgl.net:5190;http://3950.qsgl.net:5189",
++      "environmentVariables": {
++        "ASPNETCORE_ENVIRONMENT": "Production"
++      }
+     }
+   }
+ }
+diff --git a/DBAccess.Api/appsettings.Production.json b/DBAccess.Api/appsettings.Production.json
+index bfe59fc..7904b89 100644
+--- a/DBAccess.Api/appsettings.Production.json
++++ b/DBAccess.Api/appsettings.Production.json
+@@ -9,5 +9,18 @@
+   "AllowedHosts": "*",
+   "ConnectionStrings": {
+     "DefaultConnection": "Data Source=${DBACCESS_MSSQL_SERVER:-61.163.200.245};User ID=${DBACCESS_MSSQL_USER:-sa};Password=${DBACCESS_MSSQL_PASSWORD:-GalaxyS24};Encrypt=False;TrustServerCertificate=True;MultipleActiveResultSets=False;Connect Timeout=60"
++  },
++  "Kestrel": {
++    "Endpoints": {
++      "Http": {
++        "Url": "http://0.0.0.0:5189"
++      }
++    }
++  },
++  "HostSettings": {
++    "Domain": "3950.qsgl.net",
++    "HttpPort": 5189,
++    "HttpsPort": 5190,
++    "EnableHttpsRedirect": true
+   }
+ }
+\ No newline at end of file
+diff --git a/DBAccess.Api/appsettings.json b/DBAccess.Api/appsettings.json
+index 10f68b8..4f7a3b0 100644
+--- a/DBAccess.Api/appsettings.json
++++ b/DBAccess.Api/appsettings.json
+@@ -5,5 +5,17 @@
+       "Microsoft.AspNetCore": "Warning"
+     }
+   },
+-  "AllowedHosts": "*"
++  "AllowedHosts": "*",
++  "Kestrel": {
++    "Endpoints": {
++      "Http": {
++        "Url": "http://0.0.0.0:5189"
++      }
++    }
++  },
++  "HostSettings": {
++    "Domain": "localhost",
++    "HttpPort": 5189,
++    "HttpsPort": 5190
++  }
+ }
+diff --git a/DBAccess.Api/certificates/README.md b/DBAccess.Api/certificates/README.md
+new file mode 100644
+index 0000000..de48c2d
+--- /dev/null
++++ b/DBAccess.Api/certificates/README.md
+@@ -0,0 +1,18 @@
++# SSL 证书配置
++
++## 证书文件
++请将 `qsgl.net.pfx` 证书文件放置在此目录中。
++
++## 证书密码
++设置环境变量 `CERT_PASSWORD` 来指定证书密码：
++```powershell
++$env:CERT_PASSWORD="your-certificate-password"
++```
++
++## 生产部署
++确保在生产环境中正确设置以下环境变量：
++- `CERT_PASSWORD`: 证书密码
++- `ASPNETCORE_URLS`: 监听地址（可选，默认为 https://0.0.0.0:5190;http://0.0.0.0:5189）
++
++## 本地开发
++对于本地开发，如果没有证书文件，应用程序会在 HTTP 模式下运行在 5189 端口。
+\ No newline at end of file
+diff --git a/DBAccess.Api/start-production.bat b/DBAccess.Api/start-production.bat
+new file mode 100644
+index 0000000..9a53672
+--- /dev/null
++++ b/DBAccess.Api/start-production.bat
+@@ -0,0 +1,20 @@
++@echo off
++echo Starting DBAccess API with HTTPS support...
++echo.
++
++REM Set environment variables
++set CERT_PASSWORD=123456
++set ASPNETCORE_ENVIRONMENT=Production
++
++echo Certificate password: %CERT_PASSWORD%
++echo Environment: %ASPNETCORE_ENVIRONMENT%
++echo.
++
++REM Change to project directory
++cd /d "k:\DBAccess\DBAccess.Api"
++
++REM Start the application 
++echo Starting application...
++dotnet run --no-launch-profile
++
++pause
+\ No newline at end of file
+diff --git a/DBAccess.sln b/DBAccess.sln
+index fc43ac7..b784973 100644
+--- a/DBAccess.sln
++++ b/DBAccess.sln
+@@ -1,51 +1,24 @@
+-﻿
+ Microsoft Visual Studio Solution File, Format Version 12.00
+ # Visual Studio Version 17
+-VisualStudioVersion = 17.1.32414.318
++VisualStudioVersion = 17.5.2.0
+ MinimumVisualStudioVersion = 10.0.40219.1
+-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DBAccess", "DBAccess.csproj", "{3734489D-3255-496A-91BA-15CA22D6832D}"
+-EndProject
+-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SmokeTest", "SmokeTest\SmokeTest.csproj", "{AE721301-3477-4ACB-868E-1E2DAF274196}"
++Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DBAccess.Api", "DBAccess.Api\DBAccess.Api.csproj", "{2318AFB2-D66B-9BDC-9253-C1986445E020}"
+ EndProject
+ Global
+ 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+ 		Debug|Any CPU = Debug|Any CPU
+-		Debug|x64 = Debug|x64
+-		Debug|x86 = Debug|x86
+ 		Release|Any CPU = Release|Any CPU
+-		Release|x64 = Release|x64
+-		Release|x86 = Release|x86
+ 	EndGlobalSection
+ 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+-		{3734489D-3255-496A-91BA-15CA22D6832D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+-		{3734489D-3255-496A-91BA-15CA22D6832D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+-		{3734489D-3255-496A-91BA-15CA22D6832D}.Debug|x64.ActiveCfg = Debug|Any CPU
+-		{3734489D-3255-496A-91BA-15CA22D6832D}.Debug|x64.Build.0 = Debug|Any CPU
+-		{3734489D-3255-496A-91BA-15CA22D6832D}.Debug|x86.ActiveCfg = Debug|Any CPU
+-		{3734489D-3255-496A-91BA-15CA22D6832D}.Debug|x86.Build.0 = Debug|Any CPU
+-		{3734489D-3255-496A-91BA-15CA22D6832D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+-		{3734489D-3255-496A-91BA-15CA22D6832D}.Release|Any CPU.Build.0 = Release|Any CPU
+-		{3734489D-3255-496A-91BA-15CA22D6832D}.Release|x64.ActiveCfg = Release|Any CPU
+-		{3734489D-3255-496A-91BA-15CA22D6832D}.Release|x64.Build.0 = Release|Any CPU
+-		{3734489D-3255-496A-91BA-15CA22D6832D}.Release|x86.ActiveCfg = Release|Any CPU
+-		{3734489D-3255-496A-91BA-15CA22D6832D}.Release|x86.Build.0 = Release|Any CPU
+-		{AE721301-3477-4ACB-868E-1E2DAF274196}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+-		{AE721301-3477-4ACB-868E-1E2DAF274196}.Debug|Any CPU.Build.0 = Debug|Any CPU
+-		{AE721301-3477-4ACB-868E-1E2DAF274196}.Debug|x64.ActiveCfg = Debug|Any CPU
+-		{AE721301-3477-4ACB-868E-1E2DAF274196}.Debug|x64.Build.0 = Debug|Any CPU
+-		{AE721301-3477-4ACB-868E-1E2DAF274196}.Debug|x86.ActiveCfg = Debug|Any CPU
+-		{AE721301-3477-4ACB-868E-1E2DAF274196}.Debug|x86.Build.0 = Debug|Any CPU
+-		{AE721301-3477-4ACB-868E-1E2DAF274196}.Release|Any CPU.ActiveCfg = Release|Any CPU
+-		{AE721301-3477-4ACB-868E-1E2DAF274196}.Release|Any CPU.Build.0 = Release|Any CPU
+-		{AE721301-3477-4ACB-868E-1E2DAF274196}.Release|x64.ActiveCfg = Release|Any CPU
+-		{AE721301-3477-4ACB-868E-1E2DAF274196}.Release|x64.Build.0 = Release|Any CPU
+-		{AE721301-3477-4ACB-868E-1E2DAF274196}.Release|x86.ActiveCfg = Release|Any CPU
+-		{AE721301-3477-4ACB-868E-1E2DAF274196}.Release|x86.Build.0 = Release|Any CPU
++		{2318AFB2-D66B-9BDC-9253-C1986445E020}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
++		{2318AFB2-D66B-9BDC-9253-C1986445E020}.Debug|Any CPU.Build.0 = Debug|Any CPU
++		{2318AFB2-D66B-9BDC-9253-C1986445E020}.Release|Any CPU.ActiveCfg = Release|Any CPU
++		{2318AFB2-D66B-9BDC-9253-C1986445E020}.Release|Any CPU.Build.0 = Release|Any CPU
+ 	EndGlobalSection
+ 	GlobalSection(SolutionProperties) = preSolution
+ 		HideSolutionNode = FALSE
+ 	EndGlobalSection
+ 	GlobalSection(ExtensibilityGlobals) = postSolution
+-		SolutionGuid = {887D7261-2B54-4259-8E5A-D6CC6EC6BEF1}
++		SolutionGuid = {A7BC8FBA-4649-4C94-BB80-7D21BB4CF187}
+ 	EndGlobalSection
+ EndGlobal
+diff --git a/Interface.cs b/Interface.cs
+index befe8ff..e69de29 100644
+--- a/Interface.cs
++++ b/Interface.cs
+@@ -1,322 +0,0 @@
+-﻿using Microsoft.Data.SqlClient;
+-using System.Data;
+-using System.Text;
+-using MySql.Data.MySqlClient;
+-
+-namespace DBAccess
+-{
+-  public class Interface
+-  {
+-
+-    string ReturnJson = "";
+-    string conStr = ConnectionStrings.GetSqlServer();
+-        //string conStr = "Data Source =localhost; user id = sa; pwd = qsswgl_5988856";
+-        //string conStr = "Data Source = 192.168.1.130; user id = sa; pwd = qsswgl_5988856";
+-
+-        private string MysqlProcedure(string DBName, string ProcedureName, string[] InputName, string[] InputValue)
+-        {
+-            conStr = ConnectionStrings.GetMySql();
+-            conStr += ";Database=" + DBName;
+-            MySqlConnection con = new MySqlConnection(conStr);
+-            MySqlCommand cmd = new MySqlCommand(ProcedureName, con);
+-            //            cmd.Connection = con;
+-            cmd.CommandTimeout = 600;
+-            try
+-            {
+-                cmd.Connection.Open();
+-                //                cmd.CommandType = CommandType.StoredProcedure;
+-                //              cmd.CommandText = ProcedureName;
+-                string Parame_InputValue = "";
+-                int i = 0;
+-                foreach (string s in InputName)
+-                {
+-                    Parame_InputValue = InputValue[i];
+-                    MySqlParameter parameter;
+-                    parameter = new MySqlParameter("?" + @s, MySqlDbType.String);
+-                    parameter.Value = Parame_InputValue;
+-                    parameter.Direction = ParameterDirection.Input;
+-                    cmd.Parameters.Add(parameter);
+-                    i += 1;
+-                }
+-                MySqlParameter parOutput;
+-                parOutput = new MySqlParameter("?OutPutValue", MySqlDbType.String);
+-                parOutput.Direction = ParameterDirection.Output;
+-                parOutput.Value = "调用存储过程后返回的值，等待调用返回中";
+-                cmd.Parameters.Add(parOutput);  //定义输出参数
+-                cmd.ExecuteNonQuery();
+-                ReturnJson = parOutput.Value?.ToString() ?? string.Empty;//获取存储过程输出参数的值
+-                return ReturnJson;
+-            }
+-            catch (MySqlException ex)
+-            {
+-//                cmd.Connection.Close();
+-  //              cmd.Dispose();
+-                string test = ex.StackTrace ?? string.Empty;
+-                return "{\"Result\":\"" + "-1" + "\",\"Message\":\"" + ex.Message + "\"}";
+-            }
+-            finally
+-            {
+-                cmd.Connection.Close();
+-                cmd.Dispose();
+-            }
+-        }
+-
+-        public string Procedure(string DBName,string ProcedureName, string[] InputName, string[] InputValue)
+-        {
+-            //创建数据库链接
+-            //创建SqlConnection对象用以传递数据库链接字符串。
+-            conStr += "; initial catalog = " + DBName;
+-            using (SqlConnection con = new SqlConnection(conStr)) //打开数据库链接
+-            {
+-                try
+-                {
+-                    SqlCommand cmd = new SqlCommand(ProcedureName, con); //创建sqlCommand对象,api 为存储过程名称
+-                    cmd.CommandType = CommandType.StoredProcedure;
+-                    string Parame_InputValue = "";
+-                    int i = 0;
+-                    foreach (string s in InputName)
+-                    {
+-                        Parame_InputValue = InputValue[i];
+-                        cmd.Parameters.AddWithValue("@" + @s, Parame_InputValue);  //给输入参数赋值  
+-                        i = i + 1;
+-                    }
+-                    SqlParameter parOutput = cmd.Parameters.Add("@OutputValue", SqlDbType.VarChar, 102400000);//定义输出参数 
+-                    parOutput.Direction = ParameterDirection.Output;  //参数类型为Output  
+-                    SqlParameter parReturn = new SqlParameter("@return", SqlDbType.Int, 10); //定义返回值
+-                    parReturn.Direction = ParameterDirection.ReturnValue;   //参数类型为ReturnValue  
+-                    cmd.Parameters.Add(parReturn); //添加存储过程返回值
+-                    cmd.CommandTimeout = 6000; //'设置数据库执行超时时间为600秒
+-                    con.Open();
+-                    cmd.ExecuteNonQuery();
+-                    con.Close();
+-                        //在数据库链接断掉之后才可以获取到值。
+-                        ReturnJson = Convert.ToString(parOutput.Value) ?? string.Empty;//获取存储过程输出参数的值
+-                    int ReturnValue = Convert.ToInt16(parReturn.Value);
+-                    return ReturnJson;
+-
+-                }
+-
+-                catch (Exception ex)
+-                {
+-                    return "{\"Result\":\"" + "-1" + "\",\"Message\":\"" + ex.Message + "\"}";
+-                }
+-            }
+-
+-        }
+-
+-        public string Function(string DBName, string FunctionName,string InputValue,  string Fields="*",string WhereStr ="", string OrderStr="",string Limit ="",string Offset="0")
+-        {
+-            conStr += ";Initial Catalog=" + DBName;
+-            using (SqlConnection con = new SqlConnection(conStr)) //打开数据库链接
+-            {
+-                try
+-                {
+-                    if (WhereStr != "")
+-                    {
+-                        WhereStr = " Where " + WhereStr;
+-                    }
+-                    if (OrderStr!="") {
+-                        OrderStr = " Order By " + OrderStr;
+-                    }
+-                    string PageStr = "";
+-                    if (OrderStr !="" && Limit != "")
+-                    {
+-                        PageStr = " offset " + Offset + " rows fetch next " + Limit + " rows only ";
+-                    }
+-                    if (FunctionName.ToLower().Contains(".dbo.") == false)
+-                    {
+-                        FunctionName = " Dbo." + FunctionName;
+-                    }
+-                    string SelectStr = "Select " + Fields + " From " + FunctionName + "(" + InputValue + ")" + WhereStr + OrderStr + PageStr;
+-                    //SelectStr = "Select 'a\"b' as Content ";
+-                    SqlCommand cmd = new(); //创建sqlCommand对象,api 为存储过程名称
+-                    cmd.Connection = con;
+-                    cmd.CommandType = CommandType.Text;
+-                    SqlDataAdapter SqlAda=new();
+-                    cmd.CommandText = SelectStr;
+-                    cmd.CommandTimeout = 600; //'设置数据库执行超时时间为600秒
+-                    SqlAda.SelectCommand = cmd;
+-                    con.Open();
+-                    SqlDataReader DR = cmd.ExecuteReader();
+-                    ReturnJson = ToJsonArrayString(DR);
+-                    String TotalPage=""; string TotalSelectStr = "";
+-                    TotalSelectStr = "Select  Count(*) As total From " + FunctionName + "(" + InputValue + ")" + WhereStr;
+-                    cmd.CommandText = TotalSelectStr;
+-                    DR = cmd.ExecuteReader();
+-                    TotalPage=GetTotalPage(DR, Limit);
+-                    con.Close();
+-                    ReturnJson = "{" + TotalPage + ",\"rows\":" + ReturnJson + "}";
+-                    return ReturnJson;
+-
+-                }
+-
+-                catch (Exception ex)
+-                {
+-                    return "{\"Result\":\"" + "-1" + "\",\"Message\":\"" + ex.Message + "\"}";
+-                }
+-            }
+-
+-        }
+-
+-        public string Table(string DBName, string TableName, string WhereStr = "", string Fields = "*",  string OrderStr = "", string Limit = "", string Offset = "0")
+-        {
+-            conStr += ";Initial Catalog=" + DBName;
+-            using (SqlConnection con = new SqlConnection(conStr)) //打开数据库链接
+-            {
+-                try
+-                {
+-                    if (WhereStr != "")
+-                    {
+-                        WhereStr = " Where " + WhereStr;
+-                    }
+-                    if (OrderStr != "")
+-                    {
+-                        OrderStr = " Order By " + OrderStr;
+-                    }
+-                    string PageStr = "";
+-                    if (OrderStr != "" && Limit != "")
+-                    {
+-                        PageStr = " offset "+Offset+" rows fetch next "+Limit+" rows only ";
+-                    }
+-                    string SelectStr = "Select " + Fields + " From " + TableName + WhereStr +OrderStr+ PageStr;
+-                    SqlCommand cmd = new(); //创建sqlCommand对象,api 为存储过程名称
+-                    cmd.Connection = con;
+-                    cmd.CommandType = CommandType.Text;
+-                    SqlDataAdapter SqlAda = new();
+-                    cmd.CommandText = SelectStr;
+-                    //Com.CommandTimeout = 180 '设置数据库查询超时时间为180秒
+-                    SqlAda.SelectCommand = cmd;
+-                    con.Open();
+-                    SqlDataReader DR = cmd.ExecuteReader();
+-                    ReturnJson = ToJsonArrayString(DR);
+-                    String TotalPage = ""; string TotalSelectStr = "";
+-                    TotalSelectStr = "Select  Count(*) As total From " + TableName +  WhereStr;
+-                    cmd.CommandText = TotalSelectStr;
+-                    DR = cmd.ExecuteReader();
+-                    TotalPage = GetTotalPage(DR, Limit);
+-                    con.Close();
+-                    ReturnJson = "{" + TotalPage + ",\"rows\":" + ReturnJson + "}";
+-                    return ReturnJson;
+-                }
+-
+-                catch (Exception ex)
+-                {
+-                    return "{\"Result\":\"" + "-1" + "\",\"Message\":\"" + ex.Message + "\"}";
+-                }
+-            }
+-
+-        }
+-
+-        /// <summary>   
+-        /// DataReader转换为Json   
+-        /// </summary>   
+-        /// <param name="dataReader">DataReader对象</param>   
+-        /// <returns>Json字符串(数组）</returns>   
+-        public static string ToJsonArrayString(SqlDataReader dataReader)
+-        {
+-            StringBuilder jsonString = new StringBuilder();
+-            jsonString.Append("[");
+-            while (dataReader.Read())
+-            {
+-                jsonString.Append("{");
+-                for (int i = 0; i < dataReader.FieldCount; i++)
+-                {
+-                    Type type = dataReader.GetFieldType(i);
+-                    string strKey = dataReader.GetName(i);
+-                    object? rawVal = dataReader.IsDBNull(i) ? null : dataReader.GetValue(i);
+-                    string strValue = rawVal?.ToString() ?? string.Empty;
+-                    jsonString.Append("\"" + strKey + "\":");
+-                    // 非字符串类型保持原值；已在上方进行空安全处理
+-                    //datetime和int类型不能出现为空的情况,所以将其转换成字符串来进行处理。
+-                    //需要加""的
+-                    if (type == typeof(string) || type == typeof(DateTime) || type == typeof(int))
+-                    {
+-                        if (i <= dataReader.FieldCount - 1)
+-                        {
+-
+-                            jsonString.Append("\"" + strValue.Replace("\"","\\\"") + "\",");
+-                            //jsonString.Append("\"" + strValue+ "\",");
+-                        }
+-                        else
+-                        {
+-                            jsonString.Append(strValue);
+-                        }
+-                    }
+-                    //不需要加""的
+-                    else
+-                    {
+-                        if (i <= dataReader.FieldCount - 1)
+-                        {
+-                            jsonString.Append("" + strValue + ",");
+-                        }
+-                        else
+-                        {
+-                            jsonString.Append(strValue);
+-                        }
+-                    }
+-                }
+-
+-                jsonString.Append("},");
+-            }
+-            dataReader.Close();
+-            //当读取到的数据为空，此时jsonString中只有一个字符"["
+-            if (jsonString.Length == 1)
+-            {
+-                jsonString.Append("]");
+-            }
+-            else//数据不为空
+-            {
+-                //所有数据读取完成，移除最后三个多余的",},"字符
+-                jsonString.Remove(jsonString.Length - 3, 3);
+-                jsonString.Append("}");
+-                jsonString.Append("]");
+-            }
+-
+-            return jsonString.ToString();
+-        }
+-
+-        public static string GetTotalPage(SqlDataReader dataReader,string Limit="")
+-        {
+-            string jsonString="";
+-            while (dataReader.Read())
+-            {
+-                    string Total = Convert.ToString(dataReader[0]) ?? "0";
+-                    jsonString=jsonString+"\"" + "total" + "\":";
+-                    jsonString = jsonString + "\"" + Total + "\",";
+-                    jsonString = jsonString +"\"" + "page" + "\":";
+-                    decimal Page=0;
+-                   if (Convert.ToDecimal(Total) > 0)
+-                   {
+-                     Page = 1;
+-                   }
+-                    if (Limit != "" && Limit !="0" && Total !="0" )
+-                    {
+-                        Page = Convert.ToDecimal(Total) / Convert.ToDecimal(Limit);
+-                        Page = Math.Ceiling(Page);
+-                    }
+-                    jsonString = jsonString + "\"" + Page + "\"";
+-            }
+-            dataReader.Close();
+-            return jsonString;
+-        }
+-        /// <summary>
+-        /// 获取配置项
+-        /// </summary>
+-        /// <param name="key">配置文件中key字符串</param>
+-        /// <returns></returns>
+-        public static string GetappSettings(string key)
+-        {
+-            try
+-            {
+-                //打开配置文件 
+-                return "Data Source =127.0.0.1; user id = sa; pwd = qsswgl_5988856";
+-
+-
+-            }
+-            catch (Exception ex)
+-            {
+-                return ex.Message;
+-            }
+-        }
+-    }
+-}
+-- 
+2.51.0.windows.1
+

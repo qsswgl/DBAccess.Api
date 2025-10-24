@@ -1,0 +1,14 @@
+﻿{
+    "chat.editing.autoApprove": true,
+    "chat.tools.file.autoApprove": true,
+    "chat.tools.search.autoApprove": true,
+    "chat.tools.semantic.autoApprove": true,
+    "github.copilot.chat.autoApprove": true,
+    "github.copilot.advanced": {
+        "debug": false,
+        "length": 4000
+    },
+    "chat.requestApproval": "never",
+    "chat.executeImmediately": true,
+    "workbench.experimental.settingsProfiles.enabled": true
+}
