@@ -154,6 +154,23 @@ Content-Type: application/json
 | `DBACCESS_MSSQL_PASSWORD` | 数据库密码 | `YourPassword` |
 | `CERT_PASSWORD` | SSL 证书密码 | `qsgl2024` |
 
+### 监控与邮件告警（环境变量）
+
+| 变量名 | 说明 | 示例 |
+|--------|------|------|
+| `MONITOR_ENABLED` | 是否启用内置健康监控 | `true` |
+| `MONITOR_HEALTH_URL` | 健康检查URL | `http://localhost:8080/api/dbaccess/ping?db=master` |
+| `MONITOR_INTERVAL_SEC` | 检查间隔（秒） | `30` |
+| `MONITOR_FAIL_THRESHOLD` | 连续失败阈值（触发告警） | `3` |
+| `MONITOR_RECOVER_THRESHOLD` | 连续成功阈值（触发恢复通知） | `2` |
+| `SMTP_HOST` | SMTP服务器 | `smtp.139.com` |
+| `SMTP_PORT` | SMTP端口 | `465` |
+| `SMTP_SSL` | 启用SSL/STARTTLS | `true` |
+| `SMTP_USERNAME` | 发件人账号 | `qsoft@139.com` |
+| `SMTP_PASSWORD` | 授权码（勿明文提交仓库） | `574a283d502db51ea200` |
+| `SMTP_FROM` | 发件邮箱 | `qsoft@139.com` |
+| `ALERT_EMAIL_TO` | 告警接收邮箱 | `qsoft@139.com` |
+
 ### 端口配置
 
 | 端口 | 协议 | 用途 |

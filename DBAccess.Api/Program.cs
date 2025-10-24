@@ -1,5 +1,8 @@
 using DBAccess.Api.Services;
 using DBAccess.Api.Services.Security;
+using DBAccess.Api.Services.Email;
+using DBAccess.Api.Services.Monitoring;
+using Microsoft.Extensions.Options;
 using DBAccess.Api.Json;
 using Microsoft.AspNetCore.Http;
 using System.Linq;
@@ -169,6 +172,30 @@ if (int.TryParse(Environment.GetEnvironmentVariable("DBACCESS_MAX_OFFSET"), out 
 
 builder.Services.AddSingleton(guard);
 builder.Services.AddSingleton(new DbService(server, user, password, guard));
+
+// SMTP & Monitor options from configuration/env
+builder.Services.Configure<SmtpOptions>(opt =>
+{
+    opt.Host = Environment.GetEnvironmentVariable("SMTP_HOST") ?? opt.Host;
+    if (int.TryParse(Environment.GetEnvironmentVariable("SMTP_PORT"), out var p)) opt.Port = p;
+    opt.UseSsl = (Environment.GetEnvironmentVariable("SMTP_SSL") ?? "true").Equals("true", StringComparison.OrdinalIgnoreCase);
+    opt.Username = Environment.GetEnvironmentVariable("SMTP_USERNAME") ?? opt.Username;
+    opt.Password = Environment.GetEnvironmentVariable("SMTP_PASSWORD") ?? opt.Password;
+    opt.From = Environment.GetEnvironmentVariable("SMTP_FROM") ?? opt.From ?? opt.Username;
+    opt.To = Environment.GetEnvironmentVariable("ALERT_EMAIL_TO") ?? opt.To;
+});
+builder.Services.Configure<HealthMonitorOptions>(opt =>
+{
+    opt.Enabled = (Environment.GetEnvironmentVariable("MONITOR_ENABLED") ?? "true").Equals("true", StringComparison.OrdinalIgnoreCase);
+    opt.HealthUrl = Environment.GetEnvironmentVariable("MONITOR_HEALTH_URL") ?? opt.HealthUrl;
+    if (int.TryParse(Environment.GetEnvironmentVariable("MONITOR_INTERVAL_SEC"), out var iv)) opt.IntervalSeconds = iv;
+    if (int.TryParse(Environment.GetEnvironmentVariable("MONITOR_FAIL_THRESHOLD"), out var ft)) opt.FailureThreshold = ft;
+    if (int.TryParse(Environment.GetEnvironmentVariable("MONITOR_RECOVER_THRESHOLD"), out var rt)) opt.RecoveryThreshold = rt;
+});
+
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
+builder.Services.AddHostedService<HealthCheckWorker>();
 
 var app = builder.Build();
 
